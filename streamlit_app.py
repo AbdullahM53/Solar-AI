@@ -312,8 +312,14 @@ if page == "Command Center":
             card("Severity Profile")
             if "fault_severity" in df:
                 s=df["fault_severity"].map({0:"None",1:"Low",2:"Medium",3:"High"}).value_counts()
-                chart(px.bar(x=s.index,y=s.values,labels={"x":"Severity","y":"Count"}),300)
-
+chart(
+    px.bar(
+        x=s.index.tolist(),
+        y=s.values.tolist(),
+        labels={"x": "Severity", "y": "Count"}
+    ),
+    300
+)
 # ========================= POWER =============================
 elif page == "Predictive Power":
     st.title("⚡ Predictive Power")
