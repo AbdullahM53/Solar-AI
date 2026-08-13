@@ -8,8 +8,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 BASE = Path(__file__).parent
-DATA_DIR = BASE / "data"
 MODEL_DIR = BASE / "models"
+
+DATA_URL = "https://drive.google.com/uc?export=download&id=1Q0LZS2n7tEe-_H0o7vQsn8jbheRlFajU"
 
 st.set_page_config(
     page_title="Solar AI Command Center",
@@ -137,8 +138,9 @@ def chart(fig, height=360):
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo":False})
 
 @st.cache_data
-def load_data(path):
-    return pd.read_csv(path)
+@st.cache_data
+def load_data():
+    return pd.read_csv(DATA_URL)
 
 @st.cache_data
 def prepare(df):
