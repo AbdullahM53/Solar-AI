@@ -1,4 +1,3 @@
-
 import json, os
 from pathlib import Path
 import numpy as np
@@ -18,6 +17,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ========================= DATA SOURCE =========================
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Data (CSV)",
+    type=["csv"],
+    help="Upload a CSV file to use instead of the default Google Drive dataset."
+)
+
 
 # ========================= THEME ============================
 if "dark" not in st.session_state:
@@ -171,27 +178,40 @@ def prepare(df):
 
 @st.cache_resource
 def load_models():
-    import joblib
-    names = {
-        "Power / CatBoost": "cat_reg_m1.joblib",
-        "Power / LightGBM": "lgbm_reg_m1.joblib",
-        "Fault / CatBoost": "cat_model_m2.joblib",
-        "Fault / LightGBM": "lgbm_model_m2.joblib",
-        "Cause / CatBoost": "cat_model_m3.joblib",
-        "Cause / LightGBM": "lgbm_model_m3.joblib",
-        "Severity / CatBoost": "cat_model_m4.joblib",
-        "Severity / LightGBM": "lgbm_model_m4.joblib",
+    required = {
+        "power_cat": MODEL_DIR / "power_catboost.joblib",
+        "power_lgb": MODEL_DIR / "power_lightgbm.joblib",
+        "fault_cat": MODEL_DIR / "fault_catboost.joblib",
+        "fault_lgb": MODEL_DIR / "fault_lightgbm.joblib",
+        "cause_cat": MODEL_DIR / "cause_catboost.joblib",
+        "cause_lgb": MODEL_DIR / "cause_lightgbm.joblib",
+        "severity_cat": MODEL_DIR / "severity_catboost.joblib",
+        "severity_lgb": MODEL_DIR / "severity_lightgbm.joblib",
     }
-    out = {}
-    for k,v in names.items():
-        p = MODEL_DIR/v
-        if p.exists():
-            try: out[k] = joblib.load(p)
-            except Exception: pass
-    return out
+
+    models = {}
+    missing = []
+
+    for name, path in required.items():
+        if path.exists():
+            try:
+                models[name] = joblib.load(path)
+            except Exception as e:
+                st.warning(f"Could not load {path.name}: {e}")
+        else:
+            missing.append(path.name)
+
+    if missing:
+        st.warning(
+            "Some model files are missing from the deployed `models/` folder: "
+            + ", ".join(missing)
+        )
+
+    return models
+
 
 def aligned_input(model, overrides=None):
-    """Create an inference row using the exact feature names expected by the model."""
+    """Build one inference row using exactly the feature names expected by the model."""
     overrides = overrides or {}
 
     names = []
@@ -209,12 +229,12 @@ def aligned_input(model, overrides=None):
         names = list(overrides.keys())
 
     row = {}
-    for f in names:
-        if f in overrides:
-            value = overrides[f]
-        elif f in df.columns:
-            s = pd.to_numeric(df[f], errors="coerce")
-            value = float(s.median()) if s.notna().any() else 0.0
+    for feature in names:
+        if feature in overrides:
+            value = overrides[feature]
+        elif feature in df.columns:
+            numeric = pd.to_numeric(df[feature], errors="coerce")
+            value = float(numeric.median()) if numeric.notna().any() else 0.0
         else:
             value = 0.0
 
@@ -224,7 +244,7 @@ def aligned_input(model, overrides=None):
         except Exception:
             value = 0.0
 
-        row[f] = float(value)
+        row[feature] = float(value)
 
     return pd.DataFrame([row], columns=names).replace(
         [np.inf, -np.inf], np.nan
@@ -237,13 +257,6 @@ def load_metrics():
         try: return json.loads(p.read_text())
         except Exception: pass
     return {}
-
-# ========================= DATA SOURCE =========================
-uploaded_file = st.sidebar.file_uploader(
-    "Upload Data (CSV)",
-    type=["csv"],
-    help="Upload a CSV file to use instead of the default Google Drive dataset."
-)
 
 try:
     if uploaded_file is not None:
@@ -371,21 +384,30 @@ if page == "Command Center":
         with c:
             card("Severity Profile")
             if "fault_severity" in df:
-                s = df["fault_severity"].map({
-                    0: "None",
-                    1: "Low",
-                    2: "Medium",
-                    3: "High"
-                }).value_counts()
-
-                chart(
-                    px.bar(
-                        x=s.index.tolist(),
-                        y=s.values.tolist(),
-                        labels={"x": "Severity", "y": "Count"}
-                    ),
-                    300
+                severity_df = (
+                    df["fault_severity"]
+                    .map({
+                        0: "None",
+                        1: "Low",
+                        2: "Medium",
+                        3: "High"
+                    })
+                    .value_counts()
+                    .rename_axis("Severity")
+                    .reset_index(name="Count")
                 )
+
+                fig = px.bar(
+                    severity_df,
+                    x="Severity",
+                    y="Count",
+                    labels={
+                        "Severity": "Severity",
+                        "Count": "Count"
+                    }
+                )
+
+                chart(fig, 300)
 
 # ========================= POWER =============================
 elif page == "Predictive Power":
@@ -414,12 +436,6 @@ elif page == "Predictive Power":
 
         if st.button("RUN POWER FORECAST", type="primary", use_container_width=True):
             if model:
-                model_features = list(getattr(model, "feature_names_", []))
-                if not model_features:
-                    model_features = list(getattr(model, "feature_name_", []))
-                if not model_features:
-                    model_features = features
-
                 X = aligned_input(model, vals)
                 pred = float(model.predict(X)[0])
                 c1,c2=st.columns([1,1.5])
@@ -459,7 +475,7 @@ elif page == "Fault Intelligence":
             model=models.get(f"Fault / {alg}")
             if model:
                 X = aligned_input(model, vals)
-                pred=int(np.asarray(model.predict(X)).ravel()[0])
+                pred = int(np.asarray(model.predict(X)).ravel()[0])
                 prob=float(model.predict_proba(X)[0][1])
                 c1,c2=st.columns([1,1.3])
                 with c1:
