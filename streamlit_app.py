@@ -310,16 +310,22 @@ if page == "Command Center":
                 chart(px.pie(values=s.values,names=s.index,hole=.55),300)
         with c:
             card("Severity Profile")
-            if "fault_severity" in df:
-                s=df["fault_severity"].map({0:"None",1:"Low",2:"Medium",3:"High"}).value_counts()
-chart(
-    px.bar(
-        x=s.index.tolist(),
-        y=s.values.tolist(),
-        labels={"x": "Severity", "y": "Count"}
-    ),
-    300
-)
+           if "fault_severity" in df:
+    s = df["fault_severity"].map({
+        0: "None",
+        1: "Low",
+        2: "Medium",
+        3: "High"
+    }).value_counts()
+
+    chart(
+        px.bar(
+            x=s.index.tolist(),
+            y=s.values.tolist(),
+            labels={"x": "Severity", "y": "Count"}
+        ),
+        300
+    )
 # ========================= POWER =============================
 elif page == "Predictive Power":
     st.title("⚡ Predictive Power")
