@@ -2,6 +2,7 @@ import json, os
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import joblib
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -160,6 +161,7 @@ def prepare(df):
         d = d.sort_values("time")
         d["hour"] = d["time"].dt.hour
         d["month"] = d["time"].dt.month
+        d["week"] = d["time"].dt.isocalendar().week.astype(int)
         d["day_of_week"] = d["time"].dt.dayofweek
         d["is_daylight"] = d["hour"].between(6,18).astype(int)
     if "dc_voltage" in d.columns and "dc_current" in d.columns:
@@ -178,33 +180,37 @@ def prepare(df):
 
 @st.cache_resource
 def load_models():
-    required = {
-        "power_cat": MODEL_DIR / "power_catboost.joblib",
-        "power_lgb": MODEL_DIR / "power_lightgbm.joblib",
-        "fault_cat": MODEL_DIR / "fault_catboost.joblib",
-        "fault_lgb": MODEL_DIR / "fault_lightgbm.joblib",
-        "cause_cat": MODEL_DIR / "cause_catboost.joblib",
-        "cause_lgb": MODEL_DIR / "cause_lightgbm.joblib",
-        "severity_cat": MODEL_DIR / "severity_catboost.joblib",
-        "severity_lgb": MODEL_DIR / "severity_lightgbm.joblib",
+    # Actual model artifact names in the GitHub models/ folder.
+    model_files = {
+        "Power / CatBoost": MODEL_DIR / "cat_reg_m1.joblib",
+        "Power / LightGBM": MODEL_DIR / "lgbm_reg_m1.joblib",
+
+        "Fault / CatBoost": MODEL_DIR / "cat_model_m2.joblib",
+        "Fault / LightGBM": MODEL_DIR / "lgbm_model_m2.joblib",
+
+        "Cause / CatBoost": MODEL_DIR / "cat_model_m3.joblib",
+        "Cause / LightGBM": MODEL_DIR / "lgbm_model_m3.joblib",
+
+        "Severity / CatBoost": MODEL_DIR / "cat_model_m4.joblib",
+        "Severity / LightGBM": MODEL_DIR / "lgbm_model_m4.joblib",
     }
 
     models = {}
     missing = []
 
-    for name, path in required.items():
-        if path.exists():
-            try:
-                models[name] = joblib.load(path)
-            except Exception as e:
-                st.warning(f"Could not load {path.name}: {e}")
-        else:
+    for name, path in model_files.items():
+        if not path.exists():
             missing.append(path.name)
+            continue
+
+        try:
+            models[name] = joblib.load(path)
+        except Exception as e:
+            st.warning(f"Could not load {path.name}: {e}")
 
     if missing:
         st.warning(
-            "Some model files are missing from the deployed `models/` folder: "
-            + ", ".join(missing)
+            "Missing model files: " + ", ".join(missing)
         )
 
     return models
@@ -375,7 +381,14 @@ if page == "Command Center":
             card("Fault Exposure by Device")
             if "device" in df and "is_faulted" in df:
                 x=df.groupby("device")["is_faulted"].mean().mul(100).sort_values(ascending=False).head(10)
-                chart(px.bar(x=x.index,y=x.values,labels={"x":"Device","y":"Fault %"}),300)
+                chart(
+    px.bar(
+        x=x.index.tolist(),
+        y=x.values.tolist(),
+        labels={"x":"Device","y":"Fault %"}
+    ),
+    300
+)
         with b:
             card("Fault Type Mix")
             if "fault_labels" in df:
@@ -417,7 +430,7 @@ elif page == "Predictive Power":
     features = [
         "clear_sky_irradiance","ambient_temp","module_temp","inverter_temp",
         "cloud_cover","sun_elevation","sun_azimuth","day_length_hours",
-        "hour","month","day_of_week","is_daylight"
+        "hour","month","week","day_of_week","is_daylight"
     ]
     features = [f for f in features if f in df.columns]
     if not features:
@@ -449,7 +462,7 @@ elif page == "Predictive Power":
                     ))
                     chart(fig,300)
             else:
-                st.warning("Model files are not loaded. Run `python train_models.py` first.")
+                st.warning("Model files are not available. Check the `models/` folder in the GitHub repository.")
 
 # ========================= FAULT =============================
 elif page == "Fault Intelligence":
@@ -460,7 +473,7 @@ elif page == "Fault Intelligence":
         "active_power","irradiance","clear_sky_irradiance","ambient_temp","module_temp",
         "inverter_temp","dc_voltage","dc_current","ac_voltage","ac_current",
         "performance_ratio","cloud_cover","sun_elevation","sun_azimuth",
-        "day_length_hours","hour","month","day_of_week","is_daylight",
+        "day_length_hours","hour","month","week","day_of_week","is_daylight",
         "dc_power","ac_power","inverter_efficiency"
     ]
     features=[f for f in features if f in df.columns]
@@ -488,7 +501,7 @@ elif page == "Fault Intelligence":
                     ))
                     chart(fig,280)
             else:
-                st.warning("Model files are not loaded. Run `python train_models.py` first.")
+                st.warning("Model files are not available. Check the `models/` folder in the GitHub repository.")
 
 # ========================= ROOT CAUSE ========================
 elif page == "Root Cause":
@@ -499,7 +512,14 @@ elif page == "Root Cause":
         left,right=st.columns([1.15,1])
         with left:
             card("Historical Root-Cause Distribution")
-            chart(px.bar(x=s.index,y=s.values,labels={"x":"Fault label","y":"Occurrences"}),400)
+            chart(
+    px.bar(
+        x=s.index.tolist(),
+        y=s.values.tolist(),
+        labels={"x":"Fault label","y":"Occurrences"}
+    ),
+    400
+)
         with right:
             card("Cause Mix")
             chart(px.pie(values=s.values,names=s.index,hole=.58),400)
@@ -522,7 +542,13 @@ elif page == "Severity Monitor":
         left,right=st.columns(2)
         with left:
             card("Severity Distribution")
-            chart(px.bar(x=counts.index,y=counts.values),350)
+            chart(
+    px.bar(
+        x=counts.index.tolist(),
+        y=counts.values.tolist()
+    ),
+    350
+)
         with right:
             card("Severity Exposure")
             chart(px.pie(values=counts.values,names=counts.index,hole=.62),350)
@@ -548,7 +574,7 @@ elif page == "Model Laboratory":
                 fig=px.bar(mdf,x="Task",y=metric,color="Model",barmode="group")
                 chart(fig,420)
     else:
-        st.info("No saved evaluation metrics yet. Run `python train_models.py` to generate the model registry.")
+        st.info("No saved evaluation metrics were found in `models/metrics.json`.")
 
     st.divider()
     st.markdown("### Model Registry")
@@ -565,7 +591,7 @@ elif page == "Data Observatory":
     st.title("▤ Data Observatory")
     st.caption("Explore the dataset behind the intelligence layer.")
     if df.empty:
-        st.info("Place the CSV in the `data/` folder.")
+        st.info("Upload a CSV from the sidebar or use the default Google Drive dataset.")
     else:
         n1,n2,n3=st.columns(3)
         with n1:kpi("Rows",f"{len(df):,}")
@@ -589,7 +615,7 @@ elif page == "Explainability":
     st.title("⌘ Explainability")
     st.caption("Understand which variables drive the trained models.")
     if not models:
-        st.info("Run `python train_models.py` to create the model registry.")
+        st.info("No model artifacts are currently available in the `models/` folder.")
     else:
         choice=st.selectbox("Model",list(models.keys()))
         model=models[choice]
