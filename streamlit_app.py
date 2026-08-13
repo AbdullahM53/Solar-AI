@@ -233,14 +233,15 @@ with st.sidebar:
         st.session_state.dark = theme
         st.rerun()
 
-    st.markdown('<div class="section-label">System Status</div>', unsafe_allow_html=True)
-    if DATA_PATH:
-        st.success("DATA  •  ONLINE")
-    else:
-        st.warning("DATA  •  WAITING")
-    st.caption(f"Models loaded: {len(models)}/8")
-    st.caption("Pipeline: CatBoost + LightGBM")
+st.markdown('<div class="section-label">System Status</div>', unsafe_allow_html=True)
 
+if not df.empty:
+    st.success("DATA  •  ONLINE")
+else:
+    st.warning("DATA  •  WAITING")
+
+st.caption(f"Models loaded: {len(models)}/8")
+st.caption("Pipeline: CatBoost + LightGBM")
 # ========================= TOP BAR ==========================
 st.markdown(
     '<div style="display:flex;justify-content:space-between;align-items:center;">'
