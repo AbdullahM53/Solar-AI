@@ -166,17 +166,7 @@ def prepare(df):
         )
     return d
 
-def find_dataset():
-    candidates = [
-        DATA_DIR/"Synthetic-Solar-Farm-Stream-No-Repair.csv",
-        DATA_DIR/"solar_data.csv",
-        BASE/"Synthetic-Solar-Farm-Stream-No-Repair.csv",
-        BASE/"solar_data.csv",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
+
 
 @st.cache_resource
 def load_models():
@@ -206,11 +196,9 @@ def load_metrics():
         except Exception: pass
     return {}
 
-DATA_PATH = find_dataset()
-df = prepare(load_data(DATA_PATH)) if DATA_PATH else pd.DataFrame()
+df = prepare(load_data())
 models = load_models()
 metrics = load_metrics()
-
 # ========================= SIDEBAR ==========================
 with st.sidebar:
     st.markdown("""
