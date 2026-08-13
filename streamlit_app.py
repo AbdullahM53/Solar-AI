@@ -138,9 +138,12 @@ def chart(fig, height=360):
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo":False})
 
 @st.cache_data
-@st.cache_data
 def load_data():
     return pd.read_csv(DATA_URL)
+
+@st.cache_data
+def load_uploaded_data(file):
+    return pd.read_csv(file)
 
 @st.cache_data
 def prepare(df):
@@ -166,8 +169,6 @@ def prepare(df):
         )
     return d
 
-
-
 @st.cache_resource
 def load_models():
     import joblib
@@ -189,6 +190,47 @@ def load_models():
             except Exception: pass
     return out
 
+def aligned_input(model, overrides=None):
+    """Create an inference row using the exact feature names expected by the model."""
+    overrides = overrides or {}
+
+    names = []
+    for attr in ("feature_names_", "feature_name_"):
+        value = getattr(model, attr, None)
+        if value is not None:
+            try:
+                names = list(value)
+            except Exception:
+                names = []
+            if names:
+                break
+
+    if not names:
+        names = list(overrides.keys())
+
+    row = {}
+    for f in names:
+        if f in overrides:
+            value = overrides[f]
+        elif f in df.columns:
+            s = pd.to_numeric(df[f], errors="coerce")
+            value = float(s.median()) if s.notna().any() else 0.0
+        else:
+            value = 0.0
+
+        try:
+            if pd.isna(value) or not np.isfinite(float(value)):
+                value = 0.0
+        except Exception:
+            value = 0.0
+
+        row[f] = float(value)
+
+    return pd.DataFrame([row], columns=names).replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(0.0)
+
+
 def load_metrics():
     p = MODEL_DIR/"metrics.json"
     if p.exists():
@@ -196,9 +238,28 @@ def load_metrics():
         except Exception: pass
     return {}
 
-df = prepare(load_data())
+# ========================= DATA SOURCE =========================
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Data (CSV)",
+    type=["csv"],
+    help="Upload a CSV file to use instead of the default Google Drive dataset."
+)
+
+try:
+    if uploaded_file is not None:
+        df = prepare(load_uploaded_data(uploaded_file))
+        DATA_SOURCE = f"Uploaded: {uploaded_file.name}"
+    else:
+        df = prepare(load_data())
+        DATA_SOURCE = "Google Drive"
+except Exception as e:
+    df = pd.DataFrame()
+    DATA_SOURCE = "Unavailable"
+    st.error(f"Data loading failed: {e}")
+
 models = load_models()
 metrics = load_metrics()
+
 # ========================= SIDEBAR ==========================
 with st.sidebar:
     st.markdown("""
@@ -233,15 +294,14 @@ with st.sidebar:
         st.session_state.dark = theme
         st.rerun()
 
-st.markdown('<div class="section-label">System Status</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">System Status</div>', unsafe_allow_html=True)
+    if not df.empty:
+        st.success("DATA  •  ONLINE")
+    else:
+        st.warning("DATA  •  WAITING")
+    st.caption(f"Models loaded: {len(models)}/8")
+    st.caption("Pipeline: CatBoost + LightGBM")
 
-if not df.empty:
-    st.success("DATA  •  ONLINE")
-else:
-    st.warning("DATA  •  WAITING")
-
-st.caption(f"Models loaded: {len(models)}/8")
-st.caption("Pipeline: CatBoost + LightGBM")
 # ========================= TOP BAR ==========================
 st.markdown(
     '<div style="display:flex;justify-content:space-between;align-items:center;">'
@@ -264,7 +324,7 @@ if page == "Command Center":
     """, unsafe_allow_html=True)
 
     if df.empty:
-        st.info("Add the project CSV inside `data/` to activate the live analytics.")
+        st.info("Upload a CSV from the sidebar or use the default Google Drive dataset.")
     else:
         total = len(df)
         devices = df["device"].nunique() if "device" in df else 0
@@ -310,22 +370,23 @@ if page == "Command Center":
                 chart(px.pie(values=s.values,names=s.index,hole=.55),300)
         with c:
             card("Severity Profile")
-           if "fault_severity" in df:
-    s = df["fault_severity"].map({
-        0: "None",
-        1: "Low",
-        2: "Medium",
-        3: "High"
-    }).value_counts()
+            if "fault_severity" in df:
+                s = df["fault_severity"].map({
+                    0: "None",
+                    1: "Low",
+                    2: "Medium",
+                    3: "High"
+                }).value_counts()
 
-    chart(
-        px.bar(
-            x=s.index.tolist(),
-            y=s.values.tolist(),
-            labels={"x": "Severity", "y": "Count"}
-        ),
-        300
-    )
+                chart(
+                    px.bar(
+                        x=s.index.tolist(),
+                        y=s.values.tolist(),
+                        labels={"x": "Severity", "y": "Count"}
+                    ),
+                    300
+                )
+
 # ========================= POWER =============================
 elif page == "Predictive Power":
     st.title("⚡ Predictive Power")
@@ -353,8 +414,14 @@ elif page == "Predictive Power":
 
         if st.button("RUN POWER FORECAST", type="primary", use_container_width=True):
             if model:
-                X=pd.DataFrame([vals],columns=features)
-                pred=float(model.predict(X)[0])
+                model_features = list(getattr(model, "feature_names_", []))
+                if not model_features:
+                    model_features = list(getattr(model, "feature_name_", []))
+                if not model_features:
+                    model_features = features
+
+                X = aligned_input(model, vals)
+                pred = float(model.predict(X)[0])
                 c1,c2=st.columns([1,1.5])
                 with c1:
                     kpi("PREDICTED ACTIVE POWER",f"{pred:.3f}","model output")
@@ -391,7 +458,7 @@ elif page == "Fault Intelligence":
         if st.button("ANALYZE SYSTEM HEALTH",type="primary",use_container_width=True):
             model=models.get(f"Fault / {alg}")
             if model:
-                X=pd.DataFrame([vals],columns=features)
+                X = aligned_input(model, vals)
                 pred=int(np.asarray(model.predict(X)).ravel()[0])
                 prob=float(model.predict_proba(X)[0][1])
                 c1,c2=st.columns([1,1.3])
@@ -531,7 +598,7 @@ elif page == "System Settings":
     a,b=st.columns(2)
     with a:
         card("Data Source")
-        st.write(str(DATA_PATH) if DATA_PATH else "Not connected")
+        st.write(DATA_SOURCE)
         card("Model Registry")
         st.write(f"{len(models)} / 8 model artifacts available")
     with b:
@@ -542,7 +609,7 @@ elif page == "System Settings":
     st.divider()
     st.download_button(
         "DOWNLOAD PROJECT METADATA",
-        json.dumps({"models_loaded":list(models.keys()),"data_source":str(DATA_PATH)},indent=2),
+        json.dumps({"models_loaded":list(models.keys()),"data_source":DATA_SOURCE},indent=2),
         file_name="solar_ai_system_metadata.json",
         mime="application/json",
         use_container_width=True
